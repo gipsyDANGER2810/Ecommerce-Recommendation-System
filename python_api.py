@@ -1,32 +1,31 @@
 import sys
 from flask import Flask , request, jsonify
 import subprocess
-
+from flask_cors import CORS
 
 
 
 app = Flask(__name__)
+CORS(app)
 
 @app.route("/recommend")
-def recommend():
-    product_name = request.args.get('product_name')
+def recommend_popular():
 
-    if product_name:
+
+
         # Ensure the Python script is in your system path
-        sys.path.insert(0, 'C:/Users/swapn/Desktop/dataset/Rsystem.py')
+    sys.path.insert(0, 'C:/Users/swapn/Desktop/final rs/')
 
         # Import the function
-        from Rsystem import show_recommendations
+    from collaborative import popular_products
+    
+    recommendations = popular_products()
+    recommendations_dict = recommendations.to_dict(orient='records')
 
         # Get recommendations
-        recommendations = show_recommendations(product_name)
-
-        print(f"Received product_name: {product_name}")
-
         # Return recommendations as a JSON
-        return jsonify(recommendations)
-    else:
-        return jsonify({"error": "No product name provided"})
+    return jsonify(recommendations_dict)
+
 
 
 
