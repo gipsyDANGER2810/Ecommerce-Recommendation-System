@@ -49,16 +49,21 @@ df['actual_price'] = df['actual_price'].astype(str).str.replace('₹', '').str.r
 df['discount_percentage'] = df['discount_percentage'].astype(str).str.replace('%','').astype(float)/100
 df['rating'] = df['rating'].astype(str)
 count = df['rating'].str.contains('\|').sum()
-print(f"Total de linhas com '|' na coluna 'rating': {count}")
+
 df = df[df['rating'].apply(lambda x: '|' not in str(x))]
 count = df['rating'].str.contains('\|').sum()
-print(f"Total de linhas com '|' na coluna 'rating': {count}")
+
 
 df['rating'] = df['rating'].astype(str).str.replace(',', '').astype(float)
 df['rating_count'] = df['rating_count'].astype(str).str.replace(',', '').astype(float)
 
 le = LabelEncoder()
 df['user_id_encoded'] = le.fit_transform(df['user_id'])
+
+def userIdEncoder(userID):
+    uuid = userID
+    encoded_value = le.transform([uuid])[0]
+    return encoded_value
 
 # Calculate the mean rating across all products
 C = df['rating'].mean()
@@ -81,8 +86,7 @@ qualified_products['weighted_rating'] = qualified_products.apply(weighted_rating
 # Sort products based on score
 qualified_products = qualified_products.sort_values('weighted_rating', ascending=False)
 
-# Print the top recommendations
-print(qualified_products[['product_name', 'rating', 'rating_count', 'weighted_rating']])
+
 
 # DATA SPLIT
 
@@ -98,15 +102,6 @@ def content_based_filtering(df):
     tfidf_matrix = tfidf.fit_transform(df['combined_text'])
     user_profiles = {}
 
-    # def create_tfidf_matrix(df_inner):
-    #     tfidf = TfidfVectorizer(stop_words='english')
-    #     df_inner['about_product'] = df_inner['about_product'].fillna('')
-    #     tfidf_matrix = tfidf.fit_transform(df_inner['about_product'])
-    #     return tfidf_matrix, tfidf
-
-    # tfidf_matrix, tfidf = create_tfidf_matrix(df)
-
-    # user_profiles = {}
 
     for user_id_encoded in df['user_id_encoded'].unique():
         user_data = df[df['user_id_encoded'] == user_id_encoded]
@@ -166,26 +161,9 @@ def content_based_filtering(df):
     return recommend_products_with_profiles, tfidf_matrix
 
 recommender_function, tfidf_matrix_out = content_based_filtering(df)
-recommendations = recommender_function(3)
-print(recommendations)
-# OG
-# def prerequisites_collaborative():
-#     x = df.groupby('user_id_encoded').count()['rating'] > 2
-#     users_rated = x[x].index
-#     filtered_df = df[df['user_id_encoded'].isin(users_rated)]
 
-#     y = filtered_df.groupby('product_name').count()['rating'] > 0
-#     # filtered_out_users = set(df['user_id_encoded']) - set(filtered_df['user_id_encoded'])
-#     # print("Users filtered out:", filtered_out_users)
-#     high_rated_products = y[y].index
-#     final_rating = filtered_df[filtered_df['product_name'].isin(high_rated_products)]
 
-#     # Create a user-item matrix
-#     pt = final_rating.pivot_table(index='user_id_encoded', columns='product_name', values='rating')
-#     print(3 in pt.index)
 
-#     pt.fillna(0, inplace=True)
-#     return pt
 def prerequisites_collaborative():
     # Filter users who've rated at least 1 product
     x = df.groupby('user_id_encoded').count()['rating'] > 1
@@ -193,12 +171,12 @@ def prerequisites_collaborative():
     filtered_df = df[df['user_id_encoded'].isin(users_rated)]
 
     # Consider all products that have been rated at least once
-    y = filtered_df.groupby('product_name').count()['rating'] > 1
+    y = filtered_df.groupby('product_id').count()['rating'] > 1
     high_rated_products = y[y].index
-    final_rating = filtered_df[filtered_df['product_name'].isin(high_rated_products)]
+    final_rating = filtered_df[filtered_df['product_id'].isin(high_rated_products)]
 
     # Create a user-item matrix
-    pt = final_rating.pivot_table(index='user_id_encoded', columns='product_name', values='rating')
+    pt = final_rating.pivot_table(index='user_id_encoded', columns='product_id', values='rating')
     print(3 in pt.index)
 
     pt.fillna(0, inplace=True)
@@ -211,32 +189,7 @@ pt = prerequisites_collaborative()
 # OGG
 from sklearn.metrics.pairwise import cosine_similarity
 similarity_score = cosine_similarity(pt)
-# OG COLLAB
-# def get_recommendations(user_id_encoded):
-#     """Return a list of recommended products for a given user."""
-#     try:
-#         index = np.where(pt.index == user_id_encoded)[0][0]
-#         # print(f"Index for user_id_encoded: {user_id_encoded}: {index}")
 
-#         # Find similar users
-#         similar_users = sorted(list(enumerate(similarity_score[index])), key=lambda x: x[1], reverse=True)[1:6]
-#         # print(f"Similar users: {similar_users}")
-
-#         # Get the items that these users have interacted with
-#         recommended_products = []
-#         for i in similar_users:
-#             user_id = pt.index[i[0]]
-#             rated_products = pt.columns[(pt.loc[user_id] > 0)].tolist()
-#             recommended_products.extend(rated_products)
-
-#         # Remove duplicates and return
-#         recommended_products = list(set(recommended_products))
-#         # print(f"Recommended products: {recommended_products}")
-#     except IndexError:
-#         print(f"Error: user_id_encoded {user_id_encoded} not found in index.")
-#         recommended_products = qualified_products[['product_name', 'rating', 'rating_count', 'weighted_rating']]
-
-#     return recommended_products
 
 def get_recommendations(user_id_encoded):
     """Return a list of recommended products for a given user."""
@@ -259,146 +212,85 @@ def get_recommendations(user_id_encoded):
             else:
                 recommended_products[product] += i[1]
 
-    # Filter and format the top products
-    top_products = sorted(recommended_products.items(), key=lambda x: x[1], reverse=True)[:5]
+    # Filter out products with a score of 0 and format the top products
+    top_products = sorted([(product, score) for product, score in recommended_products.items() if score > 0], key=lambda x: x[1], reverse=True)[:5]
 
+    # Extracting product details
+    recommendation_response = []
+    scores = []  # New list to keep track of the scores for products that weren't skipped
+    for product_id, score in top_products:
+        product_data = df[df['product_id'] == product_id]
+        if product_data.empty:
+            print(f"Warning: No data found for product_id: {product_id}")
+            continue
+        
+        product = product_data.iloc[0]
+        model_response = {}
+        model_response['product_id'] = product['product_id']
+        model_response['product_name'] = product['product_name']
+        model_response['img_link'] = product['img_link']
+        model_response['actual_price'] = product['actual_price']
+        model_response['discounted_price'] = product['discounted_price']
+        model_response['discount_percentage'] = product['discount_percentage']
+        recommendation_response.append(model_response)
+        scores.append(score)  # Add the score for this product
+
+    # Now use the adjusted lists to construct the DataFrame
     results_df = pd.DataFrame({
-        'Id_Encoded': [user_id_encoded] * len(top_products),
-        'recommended_product': [{'product_name': prod[0]} for prod in top_products],
-        'score_recommendation': [prod[1] for prod in top_products]
+        'Id_Encoded': [user_id_encoded] * len(recommendation_response),
+        'recommended_product': recommendation_response,
+        'score_recommendation': scores
     })
-
     return results_df
 
 
 
-recommendations_collab = get_recommendations(3)
-print("collab : " , recommendations_collab)
-
-# OG HYBRID
-# def hybrid_recommendation(user_id_encoded, alpha=0.5):
-#     """
-#     alpha: Determines the weightage to be given to content-based vs collaborative filtering.
-#     An alpha of 0.5 means both will have equal weightage.
-#     """
-#     # 1. Get recommendations from Content-based Recommendation System
-#     recommender_function, tfidf_matrix_out = content_based_filtering(df)
-#     content_based_recommendations = recommender_function(user_id_encoded)
-
-#     # 2. Get recommendations from Collaborative Filtering System (user-based CF)
-#     collaborative_recommendations = get_recommendations(user_id_encoded)[:5]
-
-#     # Truncate lists for consistency
-#     min_length = min(len(content_based_recommendations), len(collaborative_recommendations))
-#     content_based_list = content_based_recommendations['recommended_product'].tolist()[:min_length]
-#     collaborative_list = collaborative_recommendations[:min_length]
-    
-#     # 3. Combine the scores 
-#     content_based_recommendations['score_recommendation'] *= alpha
-#     collaborative_scores = [(1 - idx * 0.1) * (1 - alpha) for idx in range(min_length)]
-    
-#     try:
-#         combined_products = content_based_list + collaborative_list
-#         combined_scores = content_based_recommendations['score_recommendation'].tolist()[:min_length] + collaborative_scores
-        
-#         # Deduplicate
-#         seen = set()
-#         final_recommendations = []
-#         final_scores = []
-#         print("seen",seen)
-#         for prod, score in zip(combined_products, combined_scores):
-#             if isinstance(prod, dict):
-#                 product_id = prod['product_id']
-#             else:  # If prod is a string
-#                 product_id = prod
-
-#             if product_id not in seen:
-#                 final_recommendations.append(prod)
-#                 final_scores.append(score)
-#                 seen.add(product_id)
-                
-#     except Exception as e:
-#         raise ValueError(f"Error during combination: {e}, content_based_list length: {len(content_based_list)}, collaborative_list length: {len(collaborative_list)}")
-
-#     return pd.DataFrame({'Product': final_recommendations, 'Score': final_scores})
-
-# working in a weird way
-# def hybrid_recommendation(user_id_encoded, alpha=0.5):
-#     """
-#     Combines recommendations from content-based and collaborative recommendation systems.
-#     alpha: Determines the weightage to be given to content-based vs collaborative filtering.
-#     An alpha of 0.5 means both will have equal weightage.
-#     """
-
-#     # Get recommendations from Content-based Recommendation System
-#     recommender_function, tfidf_matrix_out = content_based_filtering(df)
-#     content_based_recommendations = recommender_function(user_id_encoded)
-
-#     # Get recommendations from Collaborative Filtering System
-#     collaborative_recommendations = get_recommendations(user_id_encoded)[:5]
-
-#     # Prepare dictionaries for easy score lookup
-#     content_based_scores = dict(zip(content_based_recommendations['recommended_product'].apply(lambda x: x['product_id']),
-#                                    content_based_recommendations['score_recommendation']))
-    
-#     collaborative_scores = dict(zip(collaborative_recommendations, [(1 - idx * 0.1) for idx in range(len(collaborative_recommendations))]))
-    
-#     # Combine product ids from both methods
-#     all_product_ids = set(content_based_scores.keys()) | set(collaborative_scores.keys())
-    
-#     final_recommendations = []
-#     for product_id in all_product_ids:
-#         content_score = content_based_scores.get(product_id, 0)
-#         collab_score = collaborative_scores.get(product_id, 0)
-        
-#         combined_score = alpha * content_score + (1 - alpha) * collab_score
-#         final_recommendations.append({'Product': product_id, 'Score': combined_score})
-    
-#     # Sort the final recommendations by score in descending order and convert to DataFrame
-#     final_recommendations = sorted(final_recommendations, key=lambda x: x['Score'], reverse=True)
-#     return pd.DataFrame(final_recommendations)
-
+# recommendations_collab = get_recommendations(3)
+# print("collab : " , recommendations_collab)
 
 # idk what was this 
-def hybrid_recommendation(user_id_encoded, alpha=0.2, N=50):
+def hybrid_recommendation(user_id_encoded, alpha=0.5, N=50):
     """ Get hybrid recommendations. """
 
     # 1. Get top N recommendations from both systems
     recommender_function, _ = content_based_filtering(df)
     content_based_recommendations = recommender_function(user_id_encoded)[:N]
+    print("Top N Content-based Recommendations:")
+    print(content_based_recommendations)
     
     collaborative_recommendations = get_recommendations(user_id_encoded)[:N]
+    print("\nTop N Collaborative Recommendations:")
+    print(collaborative_recommendations)
 
-    # Normalize scores from both systems to [0,1] using Min-Max scaling
-    max_content_score = content_based_recommendations['score_recommendation'].max()
+    # Normalize scores only for collaborative system using Min-Max scaling
     max_collab_score = collaborative_recommendations['score_recommendation'].max()
-
-    content_based_recommendations['normalized_score'] = content_based_recommendations['score_recommendation'] / max_content_score
     collaborative_recommendations['normalized_score'] = collaborative_recommendations['score_recommendation'] / max_collab_score
+    print("\nNormalized Collaborative Scores:")
+    print(collaborative_recommendations['normalized_score'].head())
 
-    # 2. Normalize and combine scores for common products
-    combined_scores = {}
-    
-    for _, row in content_based_recommendations.iterrows():
-        prod_id = row['recommended_product']['product_id']
-        content_score = row['normalized_score']
+    # Create a dictionary from collaborative recommendations for O(1) access
+    collab_dict = {row['recommended_product']['product_id']: row['normalized_score'] for _, row in collaborative_recommendations.iterrows()}
 
-        collab_row = collaborative_recommendations[collaborative_recommendations['recommended_product'].apply(lambda x: x['product_name']) == prod_id]
-        if not collab_row.empty:
-            collab_score = collab_row['normalized_score'].values[0]
-        else:
-            collab_score = 0
-
-        combined_score = alpha * content_score + (1 - alpha) * collab_score
-        combined_scores[prod_id] = combined_score
+    # 2. Normalize and combine scores for common products using vectorized operations
+    content_based_recommendations['combined_score'] = content_based_recommendations.apply(lambda row: alpha * row['score_recommendation'] + (1 - alpha) * collab_dict.get(row['recommended_product']['product_id'], 0), axis=1)
+    print("\nCombined Scores:")
+    print(content_based_recommendations['combined_score'].head())
 
     # 3. Sort and get top 5
-    sorted_products = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)[:5]
+    sorted_recommendations = content_based_recommendations.sort_values(by='combined_score', ascending=False).head(5)
+    print("\nFinal Sorted Recommendations:")
+    print(sorted_recommendations)
 
-    final_recommendations = [{'product_id': prod[0]} for prod in sorted_products]
-    final_scores = [prod[1] for prod in sorted_products]
+    final_recommendations = sorted_recommendations['recommended_product'].tolist()
+    final_scores = sorted_recommendations['combined_score'].tolist()
 
     return pd.DataFrame({'Product': final_recommendations, 'Score': final_scores})
+
+
+
+
+
+
 
 
 recommendations = hybrid_recommendation(3)
